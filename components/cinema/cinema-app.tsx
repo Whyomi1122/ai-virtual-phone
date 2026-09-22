@@ -411,7 +411,6 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoShot, isPlaying, videoError]);
-
   const handleWholeFilmChat = async () => {
     if (!videoTitle || isGeneratingReply) return;
     setIsGeneratingReply(true);
@@ -421,4 +420,359 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
       const sampled: string[] = [];
       if (watched.length) {
         const step = Math.max(1, Math.ceil(watched.length / 40));
-        for (let i = 0; i < watched
+        for (let i = 0; i < watched.length && sampled.length < 40; i += step) {
+          sampled.push(`[${formatTime(watched[i].start)}] ${watched[i].text}`);
+        }
+      }
+      const prompt = `【共影总结】我们刚一起看《${videoTitle}》（看到 ${formatTime(currentTime)}）。
+${sampled.length ? `看过的部分台词节选：\n${sampled.join("\n")}` : "（没有字幕）"}
+请以伴侣口吻写 50 字左右温馨观后感，别剧透未看到的部分。`;
+      const reply = await callAI(prompt);
+      pushAssistant(`🎬 观影纪念：\n${reply}`);
+    } catch (err) {
+      setLastError(err instanceof Error ? err.message : String(err));
+      pushAssistant(API_ERR_HINT);
+    } finally {
+      setIsGeneratingReply(false);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (!videoRef.current) return;
+    const sec = videoRef.current.currentTime;
+    setCurrentTime(sec);
+    if (subtitles.length) {
+      const m = subtitles.find((c) => sec >= c.start && sec <= c.end);
+      setCurrentSub(m?.text ?? "");
+    }
+    if (Date.now() - lastSaveRef.current > 5000) {
+      lastSaveRef.current = Date.now();
+      persistSession();
+    }
+  };
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    isPlaying ? videoRef.current.pause() : videoRef.current.play();
+    setShowControls(true);
+  };
+
+  const seek = (s: number) => {
+    if (videoRef.current && duration > 0) {
+      videoRef.current.currentTime = Math.max(0, Math.min(duration, videoRef.current.currentTime + s));
+    }
+  };
+
+  const handleClose = () => {
+    persistSession();
+    try { videoRef.current?.pause(); } catch { /* ignore */ }
+    onClose();
+  };
+
+  const innerStyle: React.CSSProperties =
+    landscape && rot.w > 0 && rot.h > 0
+      ? {
+          position: "absolute",
+          width: rot.h,
+          height: rot.w,
+          left: (rot.w - rot.h) / 2,
+          top: (rot.h - rot.w) / 2,
+          transform: "rotate(90deg)",
+          transformOrigin: "center center",
+        }
+      : { position: "relative", width: "100%", height: "100%" };
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative h-full w-full bg-[#0d0d11] text-neutral-100 select-none overflow-hidden"
+    >
+      <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleSelectVideo} />
+      <input ref={srtInputRef} type="file" accept=".srt,.vtt" className="hidden" onChange={handleSelectSrt} />
+
+      <div style={innerStyle} className="flex flex-col h-full w-full bg-[#0d0d11] overflow-hidden">
+        {!landscape && (
+          <header className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 bg-[#131318]/90 backdrop-blur-xl border-b border-white/5 shrink-0">
+            <button onClick={handleClose} className="flex items-center gap-1 text-[15px] text-rose-400 active:scale-95 transition">
+              <ChevronLeft className="w-5 h-5 -ml-1" />返回
+            </button>
+            <div className="flex flex-col items-center">
+              <span className="text-[15px] font-semibold text-white/95 max-w-[150px] truncate">{videoTitle || "共影空间"}</span>
+              <span className="text-[10px] text-white/40 tracking-wider">COVE COMPANION</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {videoSrc && (
+                <button onClick={() => setLandscape(true)} title="横屏"
+                  className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-white/70 active:scale-95 transition">
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+              )}
+              <button onClick={() => fileInputRef.current?.click()}
+                className="text-xs px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 active:scale-95 transition">
+                {videoSrc ? "换片" : "选片"}
+              </button>
+            </div>
+          </header>
+        )}
+
+        <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          {!videoSrc ? (
+            <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 text-center max-w-sm mx-auto">
+              <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-rose-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shadow-2xl">
+                <Film className="w-9 h-9 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white/90">双人共影与伴聊</h3>
+                <p className="text-xs text-white/50 mt-1.5 leading-relaxed">导入视频与字幕，佑会按真实播放进度陪你看剧吐槽。点右上角横屏按钮进入横屏模式。</p>
+              </div>
+              {resumeHint && (
+                <p className="text-[11px] leading-relaxed text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                  {resumeHint}
+                </p>
+              )}
+              <button onClick={() => fileInputRef.current?.click()}
+                className="w-full py-3 rounded-2xl bg-gradient-to-r from-rose-500 to-rose-600 text-white font-medium text-sm shadow-lg shadow-rose-500/25 active:scale-[0.98] transition">
+                选择本地视频开始
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="relative flex-1 min-h-0 bg-black" onClick={() => setShowControls(!showControls)}>
+                <video
+                  ref={videoRef}
+                  src={videoSrc}
+                  className="absolute inset-0 w-full h-full object-contain"
+                  onTimeUpdate={handleTimeUpdate}
+                  onLoadedMetadata={() => {
+                    const v = videoRef.current;
+                    if (!v) return;
+                    setDuration(v.duration || 0);
+                    setVideoError("");
+                    if (pendingSeekRef.current > 0) {
+                      try { v.currentTime = pendingSeekRef.current; } catch { /* ignore */ }
+                      setCurrentTime(pendingSeekRef.current);
+                      pendingSeekRef.current = 0;
+                    }
+                  }}
+                  onPlay={() => { setIsPlaying(true); setShowControls(true); }}
+                  onPause={() => setIsPlaying(false)}
+                  onError={() => {
+                    const code = videoRef.current?.error?.code;
+                    setVideoError(code === 4 ? HEVC_ERR : "这段视频加载失败了，可能是编码不兼容或文件损坏，换一段试试。");
+                    setIsPlaying(false);
+                  }}
+                  preload="metadata"
+                  playsInline
+                />
+
+                {videoError && (
+                  <div className="absolute inset-0 z-40 flex items-center justify-center p-5 bg-black/90">
+                    <div className="max-w-[300px] rounded-2xl border border-rose-500/30 bg-[#18181e] p-4">
+                      <h4 className="text-sm font-bold text-rose-300 mb-2">这段视频没法在这里播放</h4>
+                      <p className="text-[11px] leading-relaxed text-white/70">{videoError}</p>
+                      <button onClick={() => { setVideoError(""); fileInputRef.current?.click(); }}
+                        className="mt-3 w-full py-2 rounded-xl bg-rose-500 text-white text-xs font-semibold active:scale-95 transition">
+                        好的，换一段
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {showDanmaku && (
+                  <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                    {danmakus.filter((d) => Math.abs(d.time - currentTime) < 5).map((dm) => (
+                      <div key={dm.id}
+                        className={`absolute whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium shadow-xl backdrop-blur-md max-w-[90%] truncate ${
+                          dm.sender === "char" ? "bg-rose-500/85 text-white border border-rose-300/30" : "bg-white/85 text-neutral-900"
+                        }`}
+                        style={{ top: `${12 + dm.lane * 20}%`, right: "-20%", transform: "translateX(-120%)", animation: "danmakuFly 6s linear forwards" }}>
+                        {dm.sender === "char" ? `佑: ${dm.text}` : dm.text}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {showSubtitles && currentSub && (
+                  <div className="absolute bottom-12 left-4 right-4 text-center pointer-events-none z-10">
+                    <span className="inline-block px-3.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md text-white text-[13px] font-medium border border-white/10">
+                      {currentSub}
+                    </span>
+                  </div>
+                )}
+
+                {landscape && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleClose(); }}
+                    className="absolute z-50 flex items-center gap-0.5 px-3 py-2 rounded-full bg-black/60 backdrop-blur text-rose-300 active:scale-95 transition"
+                    style={{ top: 12, left: 12, paddingLeft: 14 }}
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                    <span className="text-xs pr-1">返回</span>
+                  </button>
+                )}
+
+                <div
+                  className={`absolute inset-0 z-20 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/70 to-transparent pointer-events-none" />
+                  <div className="absolute bottom-0 inset-x-0 h-24 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
+
+                  <div className="absolute bottom-3 inset-x-4 flex flex-col gap-2.5">
+                    <div className="flex items-center gap-2.5 text-[11px] text-white/60 font-mono">
+                      <span>{formatTime(currentTime)}</span>
+                      <input type="range" min={0} max={duration || 1} value={currentTime}
+                        onChange={(e) => { if (videoRef.current && duration > 0) videoRef.current.currentTime = +e.target.value; }}
+                        className="flex-1 h-1 bg-white/25 rounded-lg appearance-none accent-rose-400 cursor-pointer" />
+                      <span>{formatTime(duration)}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <button onClick={() => seek(-10)} className="text-white/70 hover:text-white active:scale-95"><Rewind className="w-5 h-5" /></button>
+                        <button onClick={togglePlay} className="p-2.5 rounded-full bg-white/15 hover:bg-white/25 backdrop-blur text-rose-300 active:scale-90 transition">
+                          {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 translate-x-0.5" />}
+                        </button>
+                        <button onClick={() => seek(10)} className="text-white/70 hover:text-white active:scale-95"><FastForward className="w-5 h-5" /></button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setLandscape(!landscape)}
+                          className="text-[10px] px-2 py-1 rounded-full border border-white/10 text-white/70 bg-white/5 active:scale-95"
+                        >
+                          {landscape ? "竖屏" : "横屏"}
+                        </button>
+                        <button onClick={() => setAutoShot(!autoShot)}
+                          className={`text-[10px] px-2 py-1 rounded-full border flex items-center gap-1 ${autoShot ? "border-rose-400/40 text-rose-300 bg-rose-500/10" : "border-white/10 text-white/60 bg-white/5"}`}
+                          title={`每 ${AUTO_SHOT_INTERVAL} 秒佑会主动看一眼屏幕搭话`}>
+                          <Timer className="w-3 h-3" />自动
+                        </button>
+                        <button onClick={() => srtInputRef.current?.click()}
+                          className={`text-[10px] px-2 py-1 rounded-full border flex items-center gap-1 ${subtitles.length ? "border-rose-400/40 text-rose-300 bg-rose-500/10" : "border-white/10 text-white/60 bg-white/5"}`}>
+                          <Subtitles className="w-3 h-3" />字幕
+                        </button>
+                        <button onClick={() => setShowDanmaku(!showDanmaku)}
+                          className={`text-[10px] px-2 py-1 rounded-full border ${showDanmaku ? "border-rose-400/40 text-rose-300 bg-rose-500/10" : "border-white/10 text-white/40 bg-white/5"}`}>弹幕</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {landscape && (
+                <div className="shrink-0 bg-[#131318] border-t border-white/10 flex flex-col overflow-hidden">
+                  <input id="cv-drawer" type="checkbox" className="peer sr-only" />
+                  <label htmlFor="cv-drawer"
+                    className="w-full h-7 shrink-0 flex items-center justify-center gap-1.5 text-[10px] text-white/50 active:brightness-125 bg-[#18181e] cursor-pointer">
+                    展开 / 收起伴聊 · {formatTime(currentTime)}
+                  </label>
+                  <div className="hidden peer-checked:flex flex-col overflow-hidden" style={{ height: "38vh" }}>
+                    <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
+                      isGeneratingReply={isGeneratingReply} lastError={lastError} />
+                    <div className="shrink-0 p-3 border-t border-white/5">
+                      <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
+                        heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
+                        onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!landscape && (
+                <>
+                  <div className="shrink-0 flex items-center justify-between px-3.5 py-2 bg-[#17171e]/90 border-y border-white/5 text-[11px]">
+                    <div className="flex items-center gap-2 text-white/60">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="text-white/80 font-medium">与 佑 同步观影中</span>
+                      <span className="text-white/30">|</span>
+                      <span className="text-white/40 font-mono">{formatTime(currentTime)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => handleSendMessage("这一幕好精彩，你怎么看？")} className="text-rose-400 font-medium active:scale-95">问这一幕</button>
+                      <span className="text-white/20">·</span>
+                      <button onClick={handleWholeFilmChat} className="text-white/60 hover:text-white">整片聊聊</button>
+                    </div>
+                  </div>
+
+                  <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
+                    isGeneratingReply={isGeneratingReply} lastError={lastError} />
+
+                  <div className="shrink-0 p-3 bg-[#131318]/95 border-t border-white/5 pb-8 z-40">
+                    <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
+                      heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
+                      onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function ChatStream({ chatList, chatScrollRef, isGeneratingReply, lastError }:
+  { chatList: ChatMsg[]; chatScrollRef: React.RefObject<HTMLDivElement | null>; isGeneratingReply: boolean; lastError: string; }) {
+  return (
+    <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-3">
+      {chatList.map((msg) => (
+        <div key={msg.id} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
+          <div className="flex items-center gap-1.5 mb-1 px-1">
+            <span className="text-[10px] text-white/30">{msg.role === "user" ? "我" : "佑"}</span>
+            <span className="text-[9px] text-white/20 font-mono">@{msg.timeStr}</span>
+          </div>
+          {msg.frame && <img src={msg.frame} alt="" className="w-32 h-20 object-cover rounded-xl border border-white/10 mb-1.5 shadow-md" />}
+          <div className={`max-w-[82%] px-3.5 py-2 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap break-words ${
+            msg.role === "user" ? "bg-rose-500 text-white rounded-tr-sm"
+              : "bg-[#1f1f27] text-white/90 border border-white/5 rounded-tl-sm shadow-md"}`}>
+            {msg.content}
+          </div>
+        </div>
+      ))}
+      {isGeneratingReply && (
+        <div className="flex items-center gap-1.5 text-xs text-rose-400/80 px-2 py-1">
+          <Sparkles className="w-3.5 h-3.5 animate-spin" /><span>佑正在思考这一幕...</span>
+        </div>
+      )}
+      {lastError && (
+        <div className="text-[10px] text-amber-400/80 px-2 break-all">调试信息：{lastError.slice(0, 120)}</div>
+      )}
+    </div>
+  );
+}
+
+function InputBar({ value, setValue, onSend, heldFrame, onSnap, onClearSnap, disabled }: {
+  value: string; setValue: (v: string) => void; onSend: () => void;
+  heldFrame: string; onSnap: () => void; onClearSnap: () => void; disabled: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {heldFrame && (
+        <div className="flex items-center gap-2 px-2.5 py-1 bg-white/5 rounded-xl border border-white/10 self-start">
+          <img src={heldFrame} alt="" className="w-7 h-7 rounded-lg object-cover" />
+          <span className="text-[11px] text-rose-300">已夹住此刻画面</span>
+          <button onClick={onClearSnap} className="text-white/40 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <button onClick={onSnap} title="截屏发给佑"
+          className={`p-2.5 rounded-xl border active:scale-95 transition shrink-0 ${heldFrame ? "bg-rose-500 text-white border-rose-400" : "bg-white/5 border-white/10 text-white/60"}`}>
+          <Camera className="w-4 h-4" />
+        </button>
+        <input
+          type="text" value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onSend(); }}
+          placeholder={disabled ? "佑正在想..." : "和佑随口聊聊这一幕..."}
+          className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-rose-400/50"
+        />
+        <button onClick={onSend} disabled={(!value.trim() && !heldFrame) || disabled}
+          className="p-2.5 bg-rose-500 hover:bg-rose-600 disabled:opacity-30 rounded-xl text-white active:scale-95 transition shrink-0">
+          <Send className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
