@@ -5,7 +5,7 @@ import {
   ChevronLeft, Play, Pause, Send, Film, Camera, Subtitles,
   FastForward, Rewind, X, Sparkles, ChevronsUp, Maximize2, Minimize2,
 } from "lucide-react";
-import { loadChatSessions } from "@/lib/chat-storage";
+import { loadChatSessions, hydrateChatStorage } from "@/lib/chat-storage";
 import { generateChatCompletion, flattenCompletionResult } from "@/lib/chat-engine";
 
 interface DanmakuItem {
@@ -27,7 +27,7 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(false);
 
-  // ★ 手动横屏沉浸模式（与设备方向解耦，浏览器 / PWA 都可用）
+  // 沉浸模式：flex 流式布局，抽屉占据底部、视频自动让位
   const [immersive, setImmersive] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -54,7 +54,6 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     return `${m.toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
   };
 
-  // 控制条：显示后 3.5s 自动隐藏（播放中）
   useEffect(() => {
     if (!showControls || !isPlaying) return;
     const t = setTimeout(() => setShowControls(false), 3500);
@@ -133,10 +132,12 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     return p;
   };
 
+  // ★ 修复：先异步水合聊天库，再取会话
   const callAI = async (prompt: string): Promise<string> => {
+    try { await hydrateChatStorage(); } catch { /* 已水合过会抛错，忽略 */ }
     const sessions = loadChatSessions();
-    const session = sessions[0];
-    if (!session) throw new Error("还没有可用的聊天会话（先和佑聊一句建立会话）");
+    const session = sessions && sessions.length > 0 ? sessions[0] : null;
+    if (!session) throw new Error("找不到和佑的聊天会话——请先回到微信里和佑说过话，再来观影室");
     const result = await generateChatCompletion(
       session,
       [{ id: Date.now().toString(), role: "user", content: prompt, createdAt: Date.now() } as never],
@@ -187,10 +188,9 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // ★ 修复：不再强制切沉浸模式；在哪种模式就在哪里展示结果
   const handleWholeFilmChat = async () => {
     if (!videoTitle || isGeneratingReply) return;
-    setImmersive(true);
-    setDrawerOpen(true);
     setIsGeneratingReply(true);
     setLastError("");
     try {
@@ -228,16 +228,14 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
     if (videoRef.current) videoRef.current.currentTime = Math.max(0, Math.min(duration, videoRef.current.currentTime + s));
   };
 
-  const stageClass = immersive ? "absolute inset-0" : "h-[36vh] shrink-0";
-
   return (
     <div className="relative flex flex-col h-full w-full bg-[#0d0d11] text-neutral-100 select-none overflow-hidden">
       <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleSelectVideo} />
       <input ref={srtInputRef} type="file" accept=".srt,.vtt" className="hidden" onChange={handleSelectSrt} />
 
-      {/* 顶栏（沉浸模式下隐藏，画面左上角给小返回） */}
+      {/* 顶栏 */}
       {!immersive && (
-        <header className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 bg-[#131318]/90 backdrop-blur-xl border-b border-white/5">
+        <header className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 bg-[#131318]/90 backdrop-blur-xl border-b border-white/5 shrink-0">
           <button onClick={onClose} className="flex items-center gap-1 text-[15px] text-rose-400 active:scale-95 transition">
             <ChevronLeft className="w-5 h-5 -ml-1" />返回
           </button>
@@ -247,8 +245,7 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
           </div>
           <div className="flex items-center gap-1.5">
             {videoSrc && (
-              <button onClick={() => { setImmersive(true); setDrawerOpen(false); }}
-                title="横屏沉浸模式"
+              <button onClick={() => setImmersive(true)} title="沉浸模式"
                 className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-white/70 active:scale-95 transition">
                 <Maximize2 className="w-4 h-4" />
               </button>
@@ -261,7 +258,7 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
         </header>
       )}
 
-      <main className="flex-1 relative flex flex-col overflow-hidden">
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {!videoSrc ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-5 px-8 text-center max-w-sm mx-auto">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-rose-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shadow-2xl">
@@ -269,7 +266,7 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
             </div>
             <div>
               <h3 className="text-lg font-bold text-white/90">双人共影与伴聊</h3>
-              <p className="text-xs text-white/50 mt-1.5 leading-relaxed">导入视频与字幕，佑会按真实播放进度陪你看剧吐槽。点右上角 ⛶ 可进入爱奇艺式沉浸模式。</p>
+              <p className="text-xs text-white/50 mt-1.5 leading-relaxed">导入视频与字幕，佑会按真实播放进度陪你看剧吐槽。点右上角 ⛶ 进入沉浸模式。</p>
             </div>
             <button onClick={() => fileInputRef.current?.click()}
               className="w-full py-3 rounded-2xl bg-gradient-to-r from-rose-500 to-rose-600 text-white font-medium text-sm shadow-lg shadow-rose-500/25 active:scale-[0.98] transition">
@@ -278,13 +275,13 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
           </div>
         ) : (
           <>
-            {/* ── 播放舞台 ── */}
-            <div className={`relative bg-black ${stageClass}`}
+            {/* ── 播放舞台：flex-1，自动让位给抽屉，绝不塌陷 ── */}
+            <div className="relative flex-1 min-h-0 bg-black"
               onClick={() => setShowControls(!showControls)}>
               <video
                 ref={videoRef}
                 src={videoSrc}
-                className="w-full h-full object-contain"
+                className="absolute inset-0 w-full h-full object-contain"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
                 onPlay={() => { setIsPlaying(true); setShowControls(true); }}
@@ -316,7 +313,6 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
                 </div>
               )}
 
-              {/* 沉浸模式下的小返回 */}
               {immersive && (
                 <button onClick={(e) => { e.stopPropagation(); onClose(); }}
                   className="absolute top-3 left-3 z-30 p-2 rounded-full bg-black/50 backdrop-blur text-rose-300 active:scale-95 transition">
@@ -324,7 +320,7 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
                 </button>
               )}
 
-              {/* ── 悬浮控制层：点画面呼出、3.5s 自动隐藏（不与衔接条重复）── */}
+              {/* 悬浮控制层 */}
               <div
                 className={`absolute inset-0 z-20 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0 pointer-events-none"}`}
                 onClick={(e) => e.stopPropagation()}
@@ -352,7 +348,7 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
 
                     <div className="flex items-center gap-1.5">
                       {immersive && (
-                        <button onClick={() => { setImmersive(false); setDrawerOpen(false); }}
+                        <button onClick={() => setImmersive(false)}
                           className="p-1.5 rounded-full bg-white/10 text-white/70 active:scale-95" title="退出沉浸模式">
                           <Minimize2 className="w-4 h-4" />
                         </button>
@@ -367,31 +363,38 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
                   </div>
                 </div>
               </div>
-
-              {/* ── 沉浸模式：聊天抽屉 ── */}
-              {immersive && (
-                <div className={`absolute inset-x-0 bottom-0 z-30 transition-transform duration-300 ${drawerOpen ? "translate-y-0" : "translate-y-[calc(100%-28px)]"}`}>
-                  <button
-                    onClick={() => setDrawerOpen(!drawerOpen)}
-                    className="w-full h-7 bg-[#18181e]/95 backdrop-blur-xl border-t border-white/10 flex items-center justify-center gap-1.5 text-[10px] text-white/50 active:brightness-125">
-                    <ChevronsUp className={`w-3.5 h-3.5 transition-transform ${drawerOpen ? "rotate-180" : "animate-pulse"}`} />
-                    <span>{drawerOpen ? "收起伴聊" : `展开伴聊 · ${formatTime(currentTime)}`}</span>
-                  </button>
-                  <div className="h-[38vh] bg-[#131318]/97 backdrop-blur-xl flex flex-col">
-                    <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
-                      isGeneratingReply={isGeneratingReply} lastError={lastError} />
-                    <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
-                      heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
-                      onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* ── 竖屏：衔接条 + 对话流（图2 布局）── */}
+            {/* ── 沉浸模式抽屉：flex 收起/展开，高度动画 ── */}
+            {immersive && (
+              <div
+                className="shrink-0 bg-[#131318] border-t border-white/10 flex flex-col overflow-hidden transition-all duration-300"
+                style={{ height: drawerOpen ? "42vh" : "28px" }}
+              >
+                <button
+                  onClick={() => setDrawerOpen(!drawerOpen)}
+                  className="w-full h-7 shrink-0 flex items-center justify-center gap-1.5 text-[10px] text-white/50 active:brightness-125 bg-[#18181e]">
+                  <ChevronsUp className={`w-3.5 h-3.5 transition-transform ${drawerOpen ? "rotate-180" : "animate-pulse"}`} />
+                  <span>{drawerOpen ? "收起伴聊" : `展开伴聊 · ${formatTime(currentTime)}`}</span>
+                </button>
+                {drawerOpen && (
+                  <>
+                    <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
+                      isGeneratingReply={isGeneratingReply} lastError={lastError} />
+                    <div className="shrink-0 p-3 pb-6 border-t border-white/5">
+                      <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
+                        heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
+                        onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ── 竖屏（非沉浸）：衔接条 + 对话流 ── */}
             {!immersive && (
               <>
-                <div className="flex items-center justify-between px-3.5 py-2 bg-[#17171e]/90 border-y border-white/5 text-[11px]">
+                <div className="shrink-0 flex items-center justify-between px-3.5 py-2 bg-[#17171e]/90 border-y border-white/5 text-[11px]">
                   <div className="flex items-center gap-2 text-white/60">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span className="text-white/80 font-medium">与 佑 同步观影中</span>
@@ -405,24 +408,19 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col overflow-hidden">
-                  <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
-                    isGeneratingReply={isGeneratingReply} lastError={lastError} />
+                <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
+                  isGeneratingReply={isGeneratingReply} lastError={lastError} />
+
+                <div className="shrink-0 p-3 bg-[#131318]/95 border-t border-white/5 pb-8 z-40">
+                  <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
+                    heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
+                    onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
                 </div>
               </>
             )}
           </>
         )}
       </main>
-
-      {/* 竖屏底部输入栏 */}
-      {!immersive && videoSrc && (
-        <footer className="p-3 bg-[#131318]/95 backdrop-blur-xl border-t border-white/5 pb-8 z-40">
-          <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
-            heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
-            onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
-        </footer>
-      )}
     </div>
   );
 }
@@ -431,7 +429,7 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
 function ChatStream({ chatList, chatScrollRef, isGeneratingReply, lastError }:
   { chatList: ChatMsg[]; chatScrollRef: React.RefObject<HTMLDivElement | null>; isGeneratingReply: boolean; lastError: string; }) {
   return (
-    <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-3">
+    <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto p-3.5 space-y-3">
       {chatList.map((msg) => (
         <div key={msg.id} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
           <div className="flex items-center gap-1.5 mb-1 px-1">
@@ -463,17 +461,17 @@ function InputBar({ value, setValue, onSend, heldFrame, onSnap, onClearSnap, dis
   heldFrame: string; onSnap: () => void; onClearSnap: () => void; disabled: boolean;
 }) {
   return (
-    <>
+    <div className="flex flex-col gap-2">
       {heldFrame && (
-        <div className="flex items-center gap-2 px-2.5 py-1 mb-2 bg-white/5 rounded-xl border border-white/10 self-start mx-3">
+        <div className="flex items-center gap-2 px-2.5 py-1 bg-white/5 rounded-xl border border-white/10 self-start">
           <img src={heldFrame} alt="" className="w-7 h-7 rounded-lg object-cover" />
           <span className="text-[11px] text-rose-300">已夹住此刻画面</span>
           <button onClick={onClearSnap} className="text-white/40 hover:text-white"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
-      <div className="flex items-center gap-2 px-1">
+      <div className="flex items-center gap-2">
         <button onClick={onSnap} title="截屏发给佑"
-          className={`p-2.5 rounded-xl border active:scale-95 transition ${heldFrame ? "bg-rose-500 text-white border-rose-400" : "bg-white/5 border-white/10 text-white/60"}`}>
+          className={`p-2.5 rounded-xl border active:scale-95 transition shrink-0 ${heldFrame ? "bg-rose-500 text-white border-rose-400" : "bg-white/5 border-white/10 text-white/60"}`}>
           <Camera className="w-4 h-4" />
         </button>
         <input
@@ -481,13 +479,13 @@ function InputBar({ value, setValue, onSend, heldFrame, onSnap, onClearSnap, dis
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") onSend(); }}
           placeholder={disabled ? "佑正在想..." : "和佑随口聊聊这一幕..."}
-          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-rose-400/50"
+          className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-rose-400/50"
         />
         <button onClick={onSend} disabled={(!value.trim() && !heldFrame) || disabled}
-          className="p-2.5 bg-rose-500 hover:bg-rose-600 disabled:opacity-30 rounded-xl text-white active:scale-95 transition">
+          className="p-2.5 bg-rose-500 hover:bg-rose-600 disabled:opacity-30 rounded-xl text-white active:scale-95 transition shrink-0">
           <Send className="w-4 h-4" />
         </button>
       </div>
-    </>
+    </div>
   );
 }
