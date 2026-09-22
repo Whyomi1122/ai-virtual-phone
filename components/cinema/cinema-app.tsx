@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
   ChevronLeft, Play, Pause, Send, Film, Camera, Subtitles,
-  FastForward, Rewind, X, Sparkles, chevronup, ChevronsUp,
+  FastForward, Rewind, X, Sparkles, ChevronsUp, Maximize2, Minimize2,
 } from "lucide-react";
 import { loadChatSessions } from "@/lib/chat-storage";
 import { generateChatCompletion, flattenCompletionResult } from "@/lib/chat-engine";
@@ -17,7 +17,6 @@ interface ChatMsg {
   frame?: string; timeStr: string;
 }
 
-// 无 API / 调用失败时给用户的可见提示
 const API_ERR_HINT = "（我这边 API 还没连接好，暂时听不到画面和台词…先检查一下设置里的模型绑定哦）";
 
 export default function CinemaApp({ onClose }: { onClose: () => void }) {
@@ -26,10 +25,10 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [showControls, setShowControls] = useState(true);
-  const [isLandscape, setIsLandscape] = useState(false);
+  const [showControls, setShowControls] = useState(false);
 
-  // 横屏抽屉式聊天
+  // ★ 手动横屏沉浸模式（与设备方向解耦，浏览器 / PWA 都可用）
+  const [immersive, setImmersive] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [subtitles, setSubtitles] = useState<SubtitleCue[]>([]);
@@ -42,7 +41,7 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
   const [chatList, setChatList] = useState<ChatMsg[]>([]);
   const [heldFrame, setHeldFrame] = useState("");
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
-  const [lastError, setLastError] = useState<string>("");
+  const [lastError, setLastError] = useState("");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,16 +54,7 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     return `${m.toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
   };
 
-  // 检测横竖屏（CSS media query），横屏自动切换为爱奇艺式布局
-  useEffect(() => {
-    const mq = window.matchMedia("(orientation: landscape)");
-    const apply = () => { setIsLandscape(mq.matches); if (!mq.matches) setDrawerOpen(false); };
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, []);
-
-  // 控制条 3.5s 自动隐藏
+  // 控制条：显示后 3.5s 自动隐藏（播放中）
   useEffect(() => {
     if (!showControls || !isPlaying) return;
     const t = setTimeout(() => setShowControls(false), 3500);
@@ -143,7 +133,7 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     return p;
   };
 
-  const callAI = async (prompt: string, frame?: string): Promise<string> => {
+  const callAI = async (prompt: string): Promise<string> => {
     const sessions = loadChatSessions();
     const session = sessions[0];
     if (!session) throw new Error("还没有可用的聊天会话（先和佑聊一句建立会话）");
@@ -155,13 +145,19 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     return flattenCompletionResult(result).replace(/\[.*?\]/g, "").trim();
   };
 
+  const pushAssistant = (content: string) => {
+    setChatList((prev) => [...prev, {
+      id: (Date.now() + 2).toString(), role: "assistant", content, timeStr: formatTime(currentTime),
+    }]);
+  };
+
   const handleSendMessage = async (customText?: string) => {
     const text = (customText || danmakuInput).trim();
     if (!text && !heldFrame) return;
     setDanmakuInput("");
     setLastError("");
 
-    const frameToSend = heldFrame || (isLandscape && !drawerOpen ? grabCurrentFrame() : "");
+    const frameToSend = heldFrame || grabCurrentFrame();
     setHeldFrame("");
 
     setChatList((prev) => [...prev, {
@@ -173,10 +169,7 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
 
     setIsGeneratingReply(true);
     try {
-      const reply = await callAI(
-        `${text}\n\n${buildEvidencePrompt(text, currentTime, Boolean(frameToSend))}`,
-        frameToSend
-      );
+      const reply = await callAI(`${text}\n\n${buildEvidencePrompt(text, currentTime, Boolean(frameToSend))}`);
       if (reply) {
         setTimeout(() => {
           setChatList((prev) => [...prev, { id: (Date.now() + 1).toString(), role: "assistant", content: reply, timeStr: formatTime(currentTime) }]);
@@ -187,12 +180,8 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
         }, 600);
       }
     } catch (err) {
-      // ★ 失败上屏提示——不再静默吞掉
-      const msg = err instanceof Error ? err.message : String(err);
-      setLastError(msg);
-      setChatList((prev) => [...prev, {
-        id: (Date.now() + 2).toString(), role: "assistant", content: API_ERR_HINT, timeStr: formatTime(currentTime),
-      }]);
+      setLastError(err instanceof Error ? err.message : String(err));
+      pushAssistant(API_ERR_HINT);
     } finally {
       setIsGeneratingReply(false);
     }
@@ -200,24 +189,20 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
 
   const handleWholeFilmChat = async () => {
     if (!videoTitle || isGeneratingReply) return;
+    setImmersive(true);
+    setDrawerOpen(true);
     setIsGeneratingReply(true);
     setLastError("");
-    setDrawerOpen(true);
     try {
       const allCues = subtitles.slice(0, 30).map((c) => `[${formatTime(c.start)}] ${c.text}`).join("\n");
       const prompt = `【共影总结】我们刚一起看《${videoTitle}》（看到 ${formatTime(currentTime)}）。
 ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
 请以伴侣口吻写 50 字左右温馨观后感，别剧透未看到的部分。`;
       const reply = await callAI(prompt);
-      setChatList((prev) => [...prev, {
-        id: Date.now().toString(), role: "assistant", content: `🎬 观影纪念：\n${reply}`, timeStr: "全片",
-      }]);
+      pushAssistant(`🎬 观影纪念：\n${reply}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setLastError(msg);
-      setChatList((prev) => [...prev, {
-        id: (Date.now() + 2).toString(), role: "assistant", content: API_ERR_HINT, timeStr: formatTime(currentTime),
-      }]);
+      setLastError(err instanceof Error ? err.message : String(err));
+      pushAssistant(API_ERR_HINT);
     } finally {
       setIsGeneratingReply(false);
     }
@@ -243,28 +228,36 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
     if (videoRef.current) videoRef.current.currentTime = Math.max(0, Math.min(duration, videoRef.current.currentTime + s));
   };
 
-  const stageClass = isLandscape
-    ? "absolute inset-0"
-    : "h-[36vh] shrink-0";
+  const stageClass = immersive ? "absolute inset-0" : "h-[36vh] shrink-0";
 
   return (
     <div className="relative flex flex-col h-full w-full bg-[#0d0d11] text-neutral-100 select-none overflow-hidden">
       <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleSelectVideo} />
       <input ref={srtInputRef} type="file" accept=".srt,.vtt" className="hidden" onChange={handleSelectSrt} />
 
-      {/* ═══ 横屏：视频铺满全屏（爱奇艺式）；竖屏：上下布局 ═══ */}
-      {!isLandscape && (
+      {/* 顶栏（沉浸模式下隐藏，画面左上角给小返回） */}
+      {!immersive && (
         <header className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 bg-[#131318]/90 backdrop-blur-xl border-b border-white/5">
-          <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="flex items-center gap-1 text-[15px] text-rose-400 active:scale-95 transition">
+          <button onClick={onClose} className="flex items-center gap-1 text-[15px] text-rose-400 active:scale-95 transition">
             <ChevronLeft className="w-5 h-5 -ml-1" />返回
           </button>
           <div className="flex flex-col items-center">
             <span className="text-[15px] font-semibold text-white/95 max-w-[150px] truncate">{videoTitle || "共影空间"}</span>
             <span className="text-[10px] text-white/40 tracking-wider">COVE COMPANION</span>
           </div>
-          <button onClick={() => fileInputRef.current?.click()} className="text-xs px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 active:scale-95 transition">
-            {videoSrc ? "换片" : "选片"}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {videoSrc && (
+              <button onClick={() => { setImmersive(true); setDrawerOpen(false); }}
+                title="横屏沉浸模式"
+                className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-white/70 active:scale-95 transition">
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            )}
+            <button onClick={() => fileInputRef.current?.click()}
+              className="text-xs px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 active:scale-95 transition">
+              {videoSrc ? "换片" : "选片"}
+            </button>
+          </div>
         </header>
       )}
 
@@ -276,16 +269,18 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
             </div>
             <div>
               <h3 className="text-lg font-bold text-white/90">双人共影与伴聊</h3>
-              <p className="text-xs text-white/50 mt-1.5 leading-relaxed">导入视频与字幕，佑会按真实播放进度陪你看剧吐槽。支持竖屏与爱奇艺式横屏沉浸模式。</p>
+              <p className="text-xs text-white/50 mt-1.5 leading-relaxed">导入视频与字幕，佑会按真实播放进度陪你看剧吐槽。点右上角 ⛶ 可进入爱奇艺式沉浸模式。</p>
             </div>
-            <button onClick={() => fileInputRef.current?.click()} className="w-full py-3 rounded-2xl bg-gradient-to-r from-rose-500 to-rose-600 text-white font-medium text-sm shadow-lg shadow-rose-500/25 active:scale-[0.98] transition">
+            <button onClick={() => fileInputRef.current?.click()}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-rose-500 to-rose-600 text-white font-medium text-sm shadow-lg shadow-rose-500/25 active:scale-[0.98] transition">
               选择本地视频开始
             </button>
           </div>
         ) : (
           <>
             {/* ── 播放舞台 ── */}
-            <div className={`relative bg-black ${stageClass}`} onClick={() => setShowControls(!showControls)}>
+            <div className={`relative bg-black ${stageClass}`}
+              onClick={() => setShowControls(!showControls)}>
               <video
                 ref={videoRef}
                 src={videoSrc}
@@ -314,28 +309,28 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
 
               {/* 字幕 */}
               {showSubtitles && currentSub && (
-                <div className="absolute bottom-20 left-4 right-4 text-center pointer-events-none z-10">
+                <div className="absolute bottom-12 left-4 right-4 text-center pointer-events-none z-10">
                   <span className="inline-block px-3.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md text-white text-[13px] font-medium border border-white/10">
                     {currentSub}
                   </span>
                 </div>
               )}
 
-              {/* 横屏时左上小返回 */}
-              {isLandscape && (
+              {/* 沉浸模式下的小返回 */}
+              {immersive && (
                 <button onClick={(e) => { e.stopPropagation(); onClose(); }}
                   className="absolute top-3 left-3 z-30 p-2 rounded-full bg-black/50 backdrop-blur text-rose-300 active:scale-95 transition">
                   <ChevronLeft className="w-5 h-5" />
                 </button>
               )}
 
-              {/* ── 爱奇艺式悬浮控制层（点画面呼出，3.5s 自动隐藏）── */}
+              {/* ── 悬浮控制层：点画面呼出、3.5s 自动隐藏（不与衔接条重复）── */}
               <div
                 className={`absolute inset-0 z-20 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0 pointer-events-none"}`}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-black/70 to-transparent" />
-                <div className="absolute bottom-0 inset-x-0 h-28 bg-gradient-to-t from-black/80 to-transparent" />
+                <div className="absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/70 to-transparent" />
+                <div className="absolute bottom-0 inset-x-0 h-24 bg-gradient-to-t from-black/80 to-transparent" />
 
                 <div className="absolute bottom-3 inset-x-4 flex flex-col gap-2.5">
                   <div className="flex items-center gap-2.5 text-[11px] text-white/60 font-mono">
@@ -353,50 +348,48 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
                         {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 translate-x-0.5" />}
                       </button>
                       <button onClick={() => seek(10)} className="text-white/70 hover:text-white active:scale-95"><FastForward className="w-5 h-5" /></button>
-                      <button onClick={() => handleSendMessage("这一幕好精彩，你怎么看？")} className="text-xs text-rose-300 hover:text-rose-200 font-medium">问这一幕</button>
-                      <button onClick={handleWholeFilmChat} className="text-xs text-white/60 hover:text-white font-medium">整片聊聊</button>
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      <button onClick={() => fileInputRef.current?.click()} className="text-[10px] px-2 py-1 rounded-full bg-white/10 text-white/70 border border-white/10">换片</button>
-                      <button onClick={() => srtInputRef.current?.click()} className="text-[10px] px-2 py-1 rounded-full bg-white/10 text-white/70 border border-white/10 flex items-center gap-1">
-                        <Subtitles className="w-3 h-3" />{subtitles.length ? "字幕✓" : "字幕"}
+                      {immersive && (
+                        <button onClick={() => { setImmersive(false); setDrawerOpen(false); }}
+                          className="p-1.5 rounded-full bg-white/10 text-white/70 active:scale-95" title="退出沉浸模式">
+                          <Minimize2 className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button onClick={() => srtInputRef.current?.click()}
+                        className={`text-[10px] px-2 py-1 rounded-full border flex items-center gap-1 ${subtitles.length ? "border-rose-400/40 text-rose-300 bg-rose-500/10" : "border-white/10 text-white/60 bg-white/5"}`}>
+                        <Subtitles className="w-3 h-3" />字幕
                       </button>
                       <button onClick={() => setShowDanmaku(!showDanmaku)}
-                        className={`text-[10px] px-2 py-1 rounded-full border ${showDanmaku ? "border-rose-400/40 text-rose-300 bg-rose-500/10" : "border-white/10 text-white/40"}`}>弹幕</button>
+                        className={`text-[10px] px-2 py-1 rounded-full border ${showDanmaku ? "border-rose-400/40 text-rose-300 bg-rose-500/10" : "border-white/10 text-white/40 bg-white/5"}`}>弹幕</button>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* ── 横屏：聊天抽屉（点击呼吸条上拉） ── */}
-              {isLandscape && (
+              {/* ── 沉浸模式：聊天抽屉 ── */}
+              {immersive && (
                 <div className={`absolute inset-x-0 bottom-0 z-30 transition-transform duration-300 ${drawerOpen ? "translate-y-0" : "translate-y-[calc(100%-28px)]"}`}>
                   <button
                     onClick={() => setDrawerOpen(!drawerOpen)}
-                    className="w-full h-7 bg-[#18181e]/95 backdrop-blur-xl border-t border-white/10 flex items-center justify-center gap-1.5 text-[10px] text-white/50 active:brightness-125"
-                  >
+                    className="w-full h-7 bg-[#18181e]/95 backdrop-blur-xl border-t border-white/10 flex items-center justify-center gap-1.5 text-[10px] text-white/50 active:brightness-125">
                     <ChevronsUp className={`w-3.5 h-3.5 transition-transform ${drawerOpen ? "rotate-180" : "animate-pulse"}`} />
-                    <span>{drawerOpen ? "收起伴聊" : "展开伴聊 · 与佑同步观影中"}</span>
+                    <span>{drawerOpen ? "收起伴聊" : `展开伴聊 · ${formatTime(currentTime)}`}</span>
                   </button>
                   <div className="h-[38vh] bg-[#131318]/97 backdrop-blur-xl flex flex-col">
-                    <ChatStream
-                      chatList={chatList} chatScrollRef={chatScrollRef}
-                      isGeneratingReply={isGeneratingReply} lastError={lastError}
-                    />
-                    <InputBar
-                      value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
+                    <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
+                      isGeneratingReply={isGeneratingReply} lastError={lastError} />
+                    <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
                       heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
-                      onClearSnap={() => setHeldFrame("")}
-                      disabled={isGeneratingReply}
-                    />
+                      onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
                   </div>
                 </div>
               )}
             </div>
 
-            {/* ── 竖屏：衔接条 + 对话流 ── */}
-            {!isLandscape && (
+            {/* ── 竖屏：衔接条 + 对话流（图2 布局）── */}
+            {!immersive && (
               <>
                 <div className="flex items-center justify-between px-3.5 py-2 bg-[#17171e]/90 border-y border-white/5 text-[11px]">
                   <div className="flex items-center gap-2 text-white/60">
@@ -413,10 +406,8 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
                 </div>
 
                 <div className="flex-1 flex flex-col overflow-hidden">
-                  <ChatStream
-                    chatList={chatList} chatScrollRef={chatScrollRef}
-                    isGeneratingReply={isGeneratingReply} lastError={lastError}
-                  />
+                  <ChatStream chatList={chatList} chatScrollRef={chatScrollRef}
+                    isGeneratingReply={isGeneratingReply} lastError={lastError} />
                 </div>
               </>
             )}
@@ -425,21 +416,18 @@ ${allCues ? `部分台词：\n${allCues}` : "（没有字幕）"}
       </main>
 
       {/* 竖屏底部输入栏 */}
-      {!isLandscape && videoSrc && (
+      {!immersive && videoSrc && (
         <footer className="p-3 bg-[#131318]/95 backdrop-blur-xl border-t border-white/5 pb-8 z-40">
-          <InputBar
-            value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
+          <InputBar value={danmakuInput} setValue={setDanmakuInput} onSend={() => handleSendMessage()}
             heldFrame={heldFrame} onSnap={() => setHeldFrame(grabCurrentFrame())}
-            onClearSnap={() => setHeldFrame("")}
-            disabled={isGeneratingReply}
-          />
+            onClearSnap={() => setHeldFrame("")} disabled={isGeneratingReply} />
         </footer>
       )}
     </div>
   );
 }
 
-/* ══════ 子组件：抽离复用 ══════ */
+/* ══════ 子组件 ══════ */
 function ChatStream({ chatList, chatScrollRef, isGeneratingReply, lastError }:
   { chatList: ChatMsg[]; chatScrollRef: React.RefObject<HTMLDivElement | null>; isGeneratingReply: boolean; lastError: string; }) {
   return (
