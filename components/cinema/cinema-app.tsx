@@ -128,7 +128,7 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
     const t = setTimeout(() => setShowControls(false), 2800);
     return () => clearTimeout(t);
   }, [showControls, isPlaying]);
-  
+
   useEffect(() => {
     if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
   }, [chatList, isGeneratingReply]);
@@ -544,7 +544,7 @@ ${sampled.length ? `看过的部分台词节选：\n${sampled.join("\n")}` : "�
               )}
 
               {showSubtitles && currentSub && (
-                <div className="absolute bottom-12 left-4 right-4 text-center pointer-events-none z-10">
+                <div className={`absolute left-4 right-4 text-center pointer-events-none z-10 ${showControls ? "bottom-24" : "bottom-6"}`}>
                   <span className="inline-block px-3.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md text-white text-[13px] font-medium border border-white/10">
                     {currentSub}
                   </span>
@@ -563,11 +563,14 @@ ${sampled.length ? `看过的部分台词节选：\n${sampled.join("\n")}` : "�
 
               <div
                 className={`absolute inset-0 z-20 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); setShowControls(false); }}
               >
-                <div className="absolute top-0 inset-x-0 h-20 bg-gradient-to-b from-black/70 to-transparent pointer-events-none" />
-                <div className="absolute bottom-0 inset-x-0 h-24 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
-                <div className="absolute bottom-3 inset-x-4 flex flex-col gap-2.5">
+                <div className="absolute top-0 inset-x-0 h-16 bg-gradient-to-b from-black/60 to-transparent pointer-events-none" />
+                <div className="absolute bottom-0 inset-x-0 h-28 bg-gradient-to-t from-black/80 to-transparent pointer-events-none" />
+                <div
+                  className="absolute bottom-3 inset-x-4 flex flex-col gap-2.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="flex items-center gap-2.5 text-[11px] text-white/60 font-mono">
                     <span>{formatTime(currentTime)}</span>
                     <input type="range" min={0} max={duration || 1} value={currentTime}
@@ -604,8 +607,7 @@ ${sampled.length ? `看过的部分台词节选：\n${sampled.join("\n")}` : "�
                   </div>
                 </div>
               </div>
-            </div>
-
+              
             {immersive && (
               <div className="shrink-0 bg-[#131318] border-t border-white/10 flex flex-col overflow-hidden transition-all duration-300"
                 style={{ height: drawerOpen ? "42vh" : "28px" }}>
