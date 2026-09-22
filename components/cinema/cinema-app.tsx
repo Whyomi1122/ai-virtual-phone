@@ -125,10 +125,10 @@ export default function CinemaApp({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     if (!showControls || !isPlaying) return;
-    const t = setTimeout(() => setShowControls(false), 3500);
+    const t = setTimeout(() => setShowControls(false), 2800);
     return () => clearTimeout(t);
-  }, [showControls, isPlaying, currentTime]);
-
+  }, [showControls, isPlaying]);
+  
   useEffect(() => {
     if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
   }, [chatList, isGeneratingReply]);
