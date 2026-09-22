@@ -65,8 +65,11 @@ export const PAGE_1_DEFAULT: IconId[] = [
   "moments"
 ];
 
-// 第 2 页与第 3 页清空或留空，保持桌面清爽
-export const PAGE_2_DEFAULT: IconId[] = [];
+// 第 2 页：社区与系统工具（资源集市 + 工坊）
+export const PAGE_2_DEFAULT: IconId[] = [
+  "resource_hub",
+  "qa"
+];
 export const PAGE_3_DEFAULT: IconId[] = [];
 
 // 【底部 Dock 栏】：核心系统与人设设置
