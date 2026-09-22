@@ -607,7 +607,7 @@ ${sampled.length ? `看过的部分台词节选：\n${sampled.join("\n")}` : "�
                   </div>
                 </div>
               </div>
-              
+            </div>
             {immersive && (
               <div className="shrink-0 bg-[#131318] border-t border-white/10 flex flex-col overflow-hidden transition-all duration-300"
                 style={{ height: drawerOpen ? "42vh" : "28px" }}>
