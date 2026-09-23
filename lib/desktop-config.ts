@@ -67,6 +67,10 @@ export const PAGE_1_DEFAULT: IconId[] = [
 
 // 第 2 页：社区与系统工具（资源集市 + 工坊）
 export const PAGE_2_DEFAULT: IconId[] = [
+  "xiaohongshu",
+  "checkphone",
+  "shopping",
+  "appmarket",
   "resource_hub",
   "qa"
 ];
